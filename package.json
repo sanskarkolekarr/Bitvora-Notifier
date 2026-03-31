@@ -1,0 +1,14 @@
+{
+  "name": "telegram-userbot-notifier",
+  "version": "1.0.0",
+  "description": "Telegram group listener and admin notifier bot using MTProto/GramJS",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "input": "^1.0.1",
+    "telegram": "^2.22.2"
+  }
+}
