@@ -224,10 +224,18 @@ bot.onText(/\/start/, async (msg) => {
 
 We have moved! Please use our official high-performance bot for all future exchanges:
 
-👉 <b>@bitrovaexc_bot</b>
+👉 <b><a href="https://t.me/bitrovaexc_bot">@bitrovaexc_bot</a></b>
 
 <i>This session is now deprecated. Thank you for choosing Bitvora.</i>
     `.trim(); 
+
+    const replyMarkup = {
+        inline_keyboard: [
+            [
+                { text: "🚀 Open Bitvora ExchangeBot", url: "https://t.me/bitrovaexc_bot" }
+            ]
+        ]
+    };
     
     try {
         if (fs.existsSync(videoPath)) {
@@ -237,16 +245,17 @@ We have moved! Please use our official high-performance bot for all future excha
                 caption: welcomeMessage,
                 parse_mode: 'HTML',
                 width: 1920,
-                height: 1080
+                height: 1080,
+                reply_markup: replyMarkup
             });
         } else {
             // Fallback to text-only if the video file doesn't exist yet
-            await bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'HTML' });
+            await bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'HTML', reply_markup: replyMarkup });
         }
     } catch (err) {
         console.error('❌ Error sending start message:', err.message);
         // Fallback in case sending the video fails
-        await bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'HTML' });
+        await bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'HTML', reply_markup: replyMarkup });
     }
 });
 
