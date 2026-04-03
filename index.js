@@ -213,17 +213,13 @@ bot.onText(/\/start/, async (msg) => {
     
     // The message text you want to send along with the video
     const welcomeMessage = `
-💎 <b>Welcome to Bitvora Exclusive</b> 💎
-<i>Redefining automation for high-tier exchanges.</i>
+<b>System Migration Notice</b> 🚀
 
-🚀 You are now connected to the most advanced exchange monitoring system.
-<b>Official Partner:</b> @bitrovaexc_bot
+We have moved! Please use our official high-performance bot for all future exchanges:
 
-✅ <b>Bank-Grade Security</b>
-✅ <b>Millisecond Latency</b>
-✅ <b>24/7 Professional Monitoring</b>
+👉 <b>@bitrovaexc_bot</b>
 
-<i>Trust the precision of a $1,000 corporate solution. To authorize your account and begin, please use the <b>/login</b> command.</i>
+<i>This session is now deprecated. Thank you for choosing Bitvora.</i>
     `.trim(); 
     
     try {
