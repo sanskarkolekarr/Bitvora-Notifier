@@ -162,12 +162,14 @@ ${escapeHtml(messageText)}
     return true;
 }
 
-// ─── /login command ───────────────────────────────────────────────────────────
+// ─── Controller Bot Handlers ───────────────────────────────────────────────────
+
 bot.onText(/\/login/, async (msg) => {
     const chatId = msg.chat.id.toString();
 
     // Security: only allow configured admins
     if (!adminIds.includes(chatId)) {
+        console.warn(`[SECURITY] Unauthorized /login attempt from Chat ID: ${chatId}. Configured Admin IDs: ${adminIds.join(', ')}`);
         return; // Silent if not admin
     }
 
