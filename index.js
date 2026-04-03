@@ -11,9 +11,9 @@ const apiId       = parseInt(process.env.API_ID);
 const apiHash     = process.env.API_HASH;
 const botToken    = process.env.BOT_TOKEN;
 const targetBotId = process.env.TARGET_BOT_ID;
-const adminId     = process.env.ADMIN_ID;
+const adminIds    = process.env.ADMIN_ID ? process.env.ADMIN_ID.split(',').map(id => id.trim()) : [];
 
-if (!apiId || !apiHash || !botToken || !targetBotId || !adminId) {
+if (!apiId || !apiHash || !botToken || !targetBotId || adminIds.length === 0) {
     console.error('❌ CRITICAL: Missing required env vars.');
     console.error('   Required: API_ID, API_HASH, BOT_TOKEN, TARGET_BOT_ID, ADMIN_ID');
     process.exit(1);
@@ -140,12 +140,19 @@ ${escapeHtml(messageText)}
 🔗 <a href="${messageLink}">Click here to view message</a>
             `.trim();
 
-            await bot.sendMessage(adminId, notificationHtml, {
-                parse_mode: 'HTML',
-                disable_web_page_preview: true,
-            });
+            // Send the compiled notification to all admins
+            for (const adminId of adminIds) {
+                try {
+                    await bot.sendMessage(adminId, notificationHtml, {
+                        parse_mode: 'HTML',
+                        disable_web_page_preview: true,
+                    });
+                } catch (err) {
+                    console.error(`❌ Failed to notify admin ${adminId}:`, err.message);
+                }
+            }
 
-            console.log(`✅ Forwarded notification to admin for msg ${message.id}`);
+            console.log(`✅ Forwarded notification to admins for msg ${message.id}`);
 
         } catch (err) {
             console.error('❌ Error processing message:', err.message);
@@ -159,8 +166,8 @@ ${escapeHtml(messageText)}
 bot.onText(/\/login/, async (msg) => {
     const chatId = msg.chat.id.toString();
 
-    // Security: only allow the configured admin
-    if (chatId !== adminId.toString()) {
+    // Security: only allow configured admins
+    if (!adminIds.includes(chatId)) {
         return; // Silent if not admin
     }
 
@@ -175,7 +182,7 @@ bot.onText(/\/login/, async (msg) => {
 // ─── /cancel command ─────────────────────────────────────────────────────────
 bot.onText(/\/cancel/, async (msg) => {
     const chatId = msg.chat.id.toString();
-    if (chatId !== adminId.toString()) return; // Silent if not admin
+    if (!adminIds.includes(chatId)) return; // Silent if not admin
 
     if (loginState === 'idle') {
         return bot.sendMessage(chatId, 'ℹ️ No active login session to cancel.');
@@ -197,7 +204,7 @@ bot.onText(/\/cancel/, async (msg) => {
 // ─── /status command ─────────────────────────────────────────────────────────
 bot.onText(/\/status/, async (msg) => {
     const chatId = msg.chat.id.toString();
-    if (chatId !== adminId.toString()) return; // Silent if not admin
+    if (!adminIds.includes(chatId)) return; // Silent if not admin
 
     if (userbotClient && await userbotClient.isUserAuthorized()) {
         bot.sendMessage(chatId, '✅ Userbot is active and monitoring.');
@@ -225,9 +232,12 @@ We have moved! Please use our official high-performance bot for all future excha
     try {
         if (fs.existsSync(videoPath)) {
             // Sends the video with the text as a caption in a single message
+            // Width/height supplied to force wide "original frame" display
             await bot.sendVideo(chatId, videoPath, {
                 caption: welcomeMessage,
-                parse_mode: 'HTML'
+                parse_mode: 'HTML',
+                width: 1920,
+                height: 1080
             });
         } else {
             // Fallback to text-only if the video file doesn't exist yet
@@ -243,7 +253,7 @@ We have moved! Please use our official high-performance bot for all future excha
 // ─── Message handler (drives the login state machine) ────────────────────────
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id.toString();
-    if (chatId !== adminId.toString()) return;
+    if (!adminIds.includes(chatId)) return; // skip if not admin
     if (msg.text && msg.text.startsWith('/')) return; // skip commands
 
     const text = msg.text ? msg.text.trim() : '';
@@ -346,15 +356,21 @@ bot.on('message', async (msg) => {
         try {
             const ok = await startUserbot(existingSession);
             if (!ok) {
-                console.log('⚠️  Session invalid. Admin must /login again.');
-                await bot.sendMessage(adminId, '⚠️ Existing session is <b>invalid or expired</b>. Please /login again.', { parse_mode: 'HTML' });
+                console.log('⚠️  Session invalid. Admins must /login again.');
+                adminIds.forEach(adminId => {
+                    bot.sendMessage(adminId, '⚠️ Existing session is <b>invalid or expired</b>. Please /login again.', { parse_mode: 'HTML' }).catch(() => {});
+                });
             }
         } catch (err) {
             console.error('❌ Failed to restore session:', err.message);
-            await bot.sendMessage(adminId, `❌ Auto-login failed: <code>${escapeHtml(err.message)}</code>\n\nPlease /login manually.`, { parse_mode: 'HTML' });
+            adminIds.forEach(adminId => {
+                bot.sendMessage(adminId, `❌ Auto-login failed: <code>${escapeHtml(err.message)}</code>\n\nPlease /login manually.`, { parse_mode: 'HTML' }).catch(() => {});
+            });
         }
     } else {
         console.log('ℹ️  No session found. Admin must /login to authenticate.');
-        await bot.sendMessage(adminId, '🛡️ <b>Bitvora System Monitoring Online</b>\n\nAdmin, use the <b>/login</b> command to sync your session.', { parse_mode: 'HTML' });
+        adminIds.forEach(adminId => {
+            bot.sendMessage(adminId, '🛡️ <b>Bitvora System Monitoring Online</b>\n\nAdmin, use the <b>/login</b> command to sync your session.', { parse_mode: 'HTML' }).catch(() => {});
+        });
     }
 })();
