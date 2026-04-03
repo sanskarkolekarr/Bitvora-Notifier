@@ -9,6 +9,7 @@
   "dependencies": {
     "dotenv": "^16.4.5",
     "input": "^1.0.1",
+    "node-telegram-bot-api": "^0.67.0",
     "telegram": "^2.22.2"
   }
 }

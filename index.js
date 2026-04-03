@@ -1,30 +1,43 @@
 require('dotenv').config();
+const TelegramBot = require('node-telegram-bot-api');
 const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 const { NewMessage } = require('telegram/events');
-const input = require('input'); // For capturing login codes in terminal
+const fs = require('fs');
+const path = require('path');
 
-// Ensure environment variables are loaded
-const apiId = parseInt(process.env.API_ID);
-const apiHash = process.env.API_HASH;
+// ─── Environment Variables ────────────────────────────────────────────────────
+const apiId       = parseInt(process.env.API_ID);
+const apiHash     = process.env.API_HASH;
+const botToken    = process.env.BOT_TOKEN;
 const targetBotId = process.env.TARGET_BOT_ID;
+const adminId     = process.env.ADMIN_ID;
 
-// Use 'me' to forward to your own "Saved Messages", or use a username/chatID
-const adminId = process.env.ADMIN_ID || 'me'; 
-const sessionString = process.env.SESSION_STRING || '';
-
-// Validate essentials (ignore SESSION_STRING on first run)
-if (!apiId || !apiHash || !targetBotId) {
-    console.error('CRITICAL ERROR: Missing API_ID, API_HASH, or TARGET_BOT_ID in .env file.');
-    console.error('Create an app at https://my.telegram.org to get your API Credentials.');
+if (!apiId || !apiHash || !botToken || !targetBotId || !adminId) {
+    console.error('❌ CRITICAL: Missing required env vars.');
+    console.error('   Required: API_ID, API_HASH, BOT_TOKEN, TARGET_BOT_ID, ADMIN_ID');
     process.exit(1);
 }
 
-const stringSession = new StringSession(sessionString);
+// ─── .env path for live-patching SESSION_STRING ───────────────────────────────
+const ENV_PATH = path.resolve(__dirname, '.env');
 
-/**
- * Escape HTML to ensure there are no parser errors when sending formatted text
- */
+// ─── In-memory login state machine ───────────────────────────────────────────
+// States: idle | awaiting_phone | awaiting_code | awaiting_2fa
+let loginState = 'idle';
+let pendingPhone      = null;
+let pendingResolver   = null;   // resolves phoneCode promise
+let pending2faResolver = null;  // resolves password promise
+let tempClient        = null;   // TelegramClient used during login
+
+// ─── Live userbot client ──────────────────────────────────────────────────────
+let userbotClient = null;
+
+// ─── Controller bot (receives /login command) ─────────────────────────────────
+const bot = new TelegramBot(botToken, { polling: true });
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function escapeHtml(text) {
     if (!text) return '';
     return text.toString()
@@ -35,77 +48,87 @@ function escapeHtml(text) {
         .replace(/'/g, '&#039;');
 }
 
-(async () => {
-    console.log('Starting Telegram Userbot Client...');
-    
-    // Connect to Telegram MTProto API
+/**
+ * Patch SESSION_STRING= line in the .env file.
+ * Replaces whatever is there (including a previous session) with the new one.
+ */
+function saveSessionToEnv(sessionString) {
+    let content = fs.readFileSync(ENV_PATH, 'utf8');
+
+    if (/^SESSION_STRING=.*/m.test(content)) {
+        // Replace existing line
+        content = content.replace(/^SESSION_STRING=.*/m, `SESSION_STRING=${sessionString}`);
+    } else {
+        // Append new line
+        content += `\nSESSION_STRING=${sessionString}`;
+    }
+
+    fs.writeFileSync(ENV_PATH, content, 'utf8');
+    console.log('✅ SESSION_STRING saved to .env');
+}
+
+/**
+ * Read current SESSION_STRING from .env at runtime (not from process.env cache).
+ */
+function readSessionFromEnv() {
+    const content = fs.readFileSync(ENV_PATH, 'utf8');
+    const match = content.match(/^SESSION_STRING=(.*)$/m);
+    return match ? match[1].trim() : '';
+}
+
+/**
+ * Start listening with the userbot, replacing any previous listener.
+ */
+async function startUserbot(sessionString) {
+    // Tear down old client if running
+    if (userbotClient) {
+        try { await userbotClient.disconnect(); } catch (_) {}
+        userbotClient = null;
+        console.log('🔄 Old userbot disconnected.');
+    }
+
+    const stringSession = new StringSession(sessionString);
     const client = new TelegramClient(stringSession, apiId, apiHash, {
         connectionRetries: 5,
         useWSS: false,
     });
 
-    // Handle interactive login process
-    // If no SESSION_STRING is available, it will prompt you in the terminal
-    await client.start({
-        phoneNumber: async () => await input.text('Please enter your phone number (e.g. +123456789): '),
-        password: async () => await input.text('Please enter your 2FA password (if you have one): '),
-        phoneCode: async () => await input.text('Please enter the verification code you received: '),
-        onError: (err) => console.log('Login Error:', err.message),
-    });
+    // Start without interactive prompts — session already exists
+    await client.connect();
 
-    console.log('\n✅ Successfully connected to Telegram!');
-
-    // First time login - save session string to avoid relogging
-    if (!sessionString) {
-        const generatedSession = client.session.save();
-        console.log('\n======================================================');
-        console.log('⚠️ IMPORTANT: Save this SESSION_STRING in your .env file!');
-        console.log('SESSION_STRING=', generatedSession);
-        console.log('======================================================\n');
+    if (!await client.isUserAuthorized()) {
+        console.warn('⚠️  Userbot session is invalid or expired. Please /login again.');
+        return false;
     }
 
-    console.log('Waiting for messages from target bot in groups...\n');
+    userbotClient = client;
+    console.log('✅ Userbot connected and listening for messages...');
 
-    // Setup event listener for new incoming messages
     client.addEventHandler(async (event) => {
         try {
             const message = event.message;
-
-            // 1. Ignore if it's not a message with a valid sender
             if (!message || !message.peerId) return;
-
-            // 2. Ignore private DMs (only listen to groups/supergroups/channels)
             if (!message.isGroup && !message.isChannel) return;
 
-            // 3. Extract sender
             let senderIdStr = '';
             if (message.fromId) {
-                // Determine ID structure for users or bots
                 senderIdStr = typeof message.fromId.userId !== 'undefined'
-                  ? message.fromId.userId.toString()
-                  : '';
-            }
-            
-            // 4. Validate the sender matches our TARGET_BOT_ID
-            if (!senderIdStr || senderIdStr !== targetBotId.toString()) {
-                return; 
+                    ? message.fromId.userId.toString()
+                    : '';
             }
 
-            console.log(`[EVENT] Detected message from target bot (Message ID: ${message.id})`);
+            if (!senderIdStr || senderIdStr !== targetBotId.toString()) return;
 
-            // 5. Structure the forwarded notification text
+            console.log(`[EVENT] Message from target bot (msg ID: ${message.id})`);
+
             const chat = await message.getChat();
-            
             let messageLink = 'https://t.me/';
             if (chat.username) {
-                // Public Group/Channel Format
                 messageLink += `${chat.username}/${message.id}`;
             } else {
-                // Private Group format: t.me/c/<chat_id>/<msg_id>
                 messageLink += `c/${chat.id.toString()}/${message.id}`;
             }
 
-            // Extract text or fallback gracefully
             const messageText = message.message || '[Media or non-text message]';
 
             const notificationHtml = `
@@ -117,19 +140,213 @@ ${escapeHtml(messageText)}
 🔗 <a href="${messageLink}">Click here to view message</a>
             `.trim();
 
-            // 6. Send the compiled notification to the adminId
-            await client.sendMessage(adminId, {
-                message: notificationHtml,
-                parseMode: 'html',
-                linkPreview: false, // Prevents creating a big preview card from the link
+            await bot.sendMessage(adminId, notificationHtml, {
+                parse_mode: 'HTML',
+                disable_web_page_preview: true,
             });
 
-            console.log(`✅ Successfully forwarded notification to admin for msg ${message.id}`);
+            console.log(`✅ Forwarded notification to admin for msg ${message.id}`);
 
-        } catch (error) {
-            console.error('❌ Error processing incoming message event:', error.message);
+        } catch (err) {
+            console.error('❌ Error processing message:', err.message);
         }
-    }, new NewMessage({})); 
+    }, new NewMessage({}));
+
+    return true;
+}
+
+// ─── /login command ───────────────────────────────────────────────────────────
+bot.onText(/\/login/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+
+    // Security: only allow the configured admin
+    if (chatId !== adminId.toString()) {
+        return bot.sendMessage(chatId, '⛔ Unauthorized. Only the admin can use this command.');
+    }
+
+    if (loginState !== 'idle') {
+        return bot.sendMessage(chatId, '⏳ A login is already in progress. Please complete it or restart the bot.');
+    }
+
+    loginState = 'awaiting_phone';
+    bot.sendMessage(chatId, '📱 Please send your phone number in international format (e.g. +919876543210):');
+});
+
+// ─── /cancel command ─────────────────────────────────────────────────────────
+bot.onText(/\/cancel/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    if (chatId !== adminId.toString()) return;
+
+    if (loginState === 'idle') {
+        return bot.sendMessage(chatId, 'ℹ️ No active login session to cancel.');
+    }
+
+    // Abort the temp client
+    if (tempClient) {
+        try { await tempClient.disconnect(); } catch (_) {}
+        tempClient = null;
+    }
+    loginState = 'idle';
+    pendingPhone = null;
+    pendingResolver = null;
+    pending2faResolver = null;
+
+    bot.sendMessage(chatId, '❌ Login cancelled.');
+});
+
+// ─── /status command ─────────────────────────────────────────────────────────
+bot.onText(/\/status/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    if (chatId !== adminId.toString()) return;
+
+    if (userbotClient && await userbotClient.isUserAuthorized()) {
+        bot.sendMessage(chatId, '✅ Userbot is active and monitoring.');
+    } else {
+        bot.sendMessage(chatId, '❌ Userbot is NOT connected. Use /login to authenticate.');
+    }
+});
+
+// ─── /start command ──────────────────────────────────────────────────────────
+bot.onText(/\/start/, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    const videoPath = path.resolve(__dirname, 'start_video.mp4');
     
-    // Process keeps running
+    // The message text you want to send along with the video
+    const welcomeMessage = `<b>Welcome!</b>\n\nInsert your custom message logic here.`; 
+    
+    try {
+        if (fs.existsSync(videoPath)) {
+            // Sends the video with the text as a caption in a single message
+            await bot.sendVideo(chatId, videoPath, {
+                caption: welcomeMessage,
+                parse_mode: 'HTML'
+            });
+        } else {
+            // Fallback to text-only if the video file doesn't exist yet
+            await bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'HTML' });
+        }
+    } catch (err) {
+        console.error('❌ Error sending start message:', err.message);
+        // Fallback in case sending the video fails (e.g. file too large)
+        await bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'HTML' });
+    }
+});
+
+// ─── Message handler (drives the login state machine) ────────────────────────
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id.toString();
+    if (chatId !== adminId.toString()) return;
+    if (msg.text && msg.text.startsWith('/')) return; // skip commands
+
+    const text = msg.text ? msg.text.trim() : '';
+
+    // ── Step 1: Received phone number ─────────────────────────────────────────
+    if (loginState === 'awaiting_phone') {
+        pendingPhone = text;
+        loginState = 'awaiting_code';
+
+        bot.sendMessage(chatId, `📡 Sending OTP to <b>${escapeHtml(pendingPhone)}</b>... please wait.`, { parse_mode: 'HTML' });
+
+        // Boot a fresh TelegramClient for login
+        if (tempClient) {
+            try { await tempClient.disconnect(); } catch (_) {}
+        }
+        tempClient = new TelegramClient(new StringSession(''), apiId, apiHash, {
+            connectionRetries: 5,
+            useWSS: false,
+        });
+
+        // Run the full login flow — resolvers are injected by later messages
+        tempClient.start({
+            phoneNumber: async () => pendingPhone,
+            password: async () => {
+                loginState = 'awaiting_2fa';
+                bot.sendMessage(chatId, '🔐 Your account has 2FA enabled. Please send your password:');
+                return new Promise((resolve) => { pending2faResolver = resolve; });
+            },
+            phoneCode: async () => {
+                bot.sendMessage(chatId, '📨 OTP sent! Please enter the verification code you received:');
+                return new Promise((resolve) => { pendingResolver = resolve; });
+            },
+            onError: async (err) => {
+                console.error('Login error:', err.message);
+                loginState = 'idle';
+                tempClient = null;
+                pendingPhone = null;
+                pendingResolver = null;
+                pending2faResolver = null;
+                bot.sendMessage(chatId, `❌ Login failed: <code>${escapeHtml(err.message)}</code>\n\nTry /login again.`, { parse_mode: 'HTML' });
+            },
+        }).then(async () => {
+            // ── Login succeeded ───────────────────────────────────────────────
+            const newSession = tempClient.session.save();
+            saveSessionToEnv(newSession);
+
+            bot.sendMessage(chatId, '✅ <b>Login successful!</b> Session saved. Starting userbot...', { parse_mode: 'HTML' });
+
+            // Reset state
+            loginState = 'idle';
+            pendingPhone = null;
+            pendingResolver = null;
+            pending2faResolver = null;
+
+            // Start the userbot with the fresh session
+            const ok = await startUserbot(newSession);
+            if (ok) {
+                bot.sendMessage(chatId, '🟢 Userbot is now live and monitoring target bot messages!');
+            } else {
+                bot.sendMessage(chatId, '⚠️ Session saved but userbot failed to start. Try restarting the bot.');
+            }
+
+        }).catch(async (err) => {
+            console.error('Login chain error:', err.message);
+            loginState = 'idle';
+            tempClient = null;
+            bot.sendMessage(chatId, `❌ Login error: <code>${escapeHtml(err.message)}</code>`, { parse_mode: 'HTML' });
+        });
+
+        return;
+    }
+
+    // ── Step 2: Received OTP code ─────────────────────────────────────────────
+    if (loginState === 'awaiting_code') {
+        if (pendingResolver) {
+            pendingResolver(text);
+            pendingResolver = null;
+        }
+        return;
+    }
+
+    // ── Step 3: Received 2FA password ────────────────────────────────────────
+    if (loginState === 'awaiting_2fa') {
+        if (pending2faResolver) {
+            pending2faResolver(text);
+            pending2faResolver = null;
+            loginState = 'awaiting_code'; // reset so next message doesn't re-trigger
+        }
+        return;
+    }
+});
+
+// ─── Boot: auto-start userbot if session already exists ──────────────────────
+(async () => {
+    console.log('🤖 Controller bot started. Polling for commands...');
+
+    const existingSession = readSessionFromEnv();
+    if (existingSession) {
+        console.log('🔄 Found existing session. Attempting to restore userbot...');
+        try {
+            const ok = await startUserbot(existingSession);
+            if (!ok) {
+                console.log('⚠️  Session invalid. Admin must /login again.');
+                await bot.sendMessage(adminId, '⚠️ Existing session is <b>invalid or expired</b>. Please /login again.', { parse_mode: 'HTML' });
+            }
+        } catch (err) {
+            console.error('❌ Failed to restore session:', err.message);
+            await bot.sendMessage(adminId, `❌ Auto-login failed: <code>${escapeHtml(err.message)}</code>\n\nPlease /login manually.`, { parse_mode: 'HTML' });
+        }
+    } else {
+        console.log('ℹ️  No session found. Admin must /login to authenticate.');
+        await bot.sendMessage(adminId, '👋 Bot started! Use /login to authenticate your Telegram account and start monitoring.', { parse_mode: 'HTML' });
+    }
 })();
