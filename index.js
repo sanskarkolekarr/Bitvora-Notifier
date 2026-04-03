@@ -170,7 +170,7 @@ bot.onText(/\/login/, async (msg) => {
     // Security: only allow configured admins
     if (!adminIds.includes(chatId)) {
         console.warn(`[SECURITY] Unauthorized /login attempt from Chat ID: ${chatId}. Configured Admin IDs: ${adminIds.join(', ')}`);
-        return bot.sendMessage(chatId, `🚫 <b>Unauthorized</b>\n\nYour Telegram ID (<code>${chatId}</code>) is not listed in the ADMIN_ID configuration.\n\nPlease add <code>${chatId}</code> to your .env file and restart the bot.`, { parse_mode: 'HTML' });
+        return; // Silent if not admin
     }
 
     if (loginState !== 'idle') {
