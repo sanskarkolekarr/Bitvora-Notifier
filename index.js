@@ -209,10 +209,22 @@ bot.onText(/\/status/, async (msg) => {
 // ─── /start command ──────────────────────────────────────────────────────────
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id.toString();
-    const videoPath = path.resolve(__dirname, 'start_video.mp4');
+    const videoPath = path.resolve(__dirname, 'start_video.MOV');
     
     // The message text you want to send along with the video
-    const welcomeMessage = `<b>Welcome!</b>\n\nInsert your custom message logic here.`; 
+    const welcomeMessage = `
+💎 <b>Welcome to Bitvora Exclusive</b> 💎
+<i>Redefining automation for high-tier exchanges.</i>
+
+🚀 You are now connected to the most advanced exchange monitoring system.
+<b>Official Partner:</b> @bitrovaexc_bot
+
+✅ <b>Bank-Grade Security</b>
+✅ <b>Millisecond Latency</b>
+✅ <b>24/7 Professional Monitoring</b>
+
+<i>Trust the precision of a $1,000 corporate solution. To authorize your account and begin, please use the <b>/login</b> command.</i>
+    `.trim(); 
     
     try {
         if (fs.existsSync(videoPath)) {
@@ -227,7 +239,7 @@ bot.onText(/\/start/, async (msg) => {
         }
     } catch (err) {
         console.error('❌ Error sending start message:', err.message);
-        // Fallback in case sending the video fails (e.g. file too large)
+        // Fallback in case sending the video fails
         await bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'HTML' });
     }
 });
