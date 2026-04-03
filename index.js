@@ -261,9 +261,10 @@ bot.on('message', async (msg) => {
     // ── Step 1: Received phone number ─────────────────────────────────────────
     if (loginState === 'awaiting_phone') {
         pendingPhone = text;
+        const myPhone = text; // local copy to avoid null issues during retries
         loginState = 'awaiting_code';
 
-        bot.sendMessage(chatId, `📡 Sending OTP to <b>${escapeHtml(pendingPhone)}</b>... please wait.`, { parse_mode: 'HTML' });
+        bot.sendMessage(chatId, `📡 Sending OTP to <b>${escapeHtml(myPhone)}</b>... please wait.`, { parse_mode: 'HTML' });
 
         // Boot a fresh TelegramClient for login
         if (tempClient) {
@@ -276,7 +277,7 @@ bot.on('message', async (msg) => {
 
         // Run the full login flow — resolvers are injected by later messages
         tempClient.start({
-            phoneNumber: async () => pendingPhone,
+            phoneNumber: async () => myPhone,
             password: async () => {
                 loginState = 'awaiting_2fa';
                 bot.sendMessage(chatId, '🔐 Your account has 2FA enabled. Please send your password:');
