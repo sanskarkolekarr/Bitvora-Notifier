@@ -161,7 +161,7 @@ bot.onText(/\/login/, async (msg) => {
 
     // Security: only allow the configured admin
     if (chatId !== adminId.toString()) {
-        return bot.sendMessage(chatId, '⛔ Unauthorized. Only the admin can use this command.');
+        return; // Silent if not admin
     }
 
     if (loginState !== 'idle') {
@@ -175,7 +175,7 @@ bot.onText(/\/login/, async (msg) => {
 // ─── /cancel command ─────────────────────────────────────────────────────────
 bot.onText(/\/cancel/, async (msg) => {
     const chatId = msg.chat.id.toString();
-    if (chatId !== adminId.toString()) return;
+    if (chatId !== adminId.toString()) return; // Silent if not admin
 
     if (loginState === 'idle') {
         return bot.sendMessage(chatId, 'ℹ️ No active login session to cancel.');
@@ -197,7 +197,7 @@ bot.onText(/\/cancel/, async (msg) => {
 // ─── /status command ─────────────────────────────────────────────────────────
 bot.onText(/\/status/, async (msg) => {
     const chatId = msg.chat.id.toString();
-    if (chatId !== adminId.toString()) return;
+    if (chatId !== adminId.toString()) return; // Silent if not admin
 
     if (userbotClient && await userbotClient.isUserAuthorized()) {
         bot.sendMessage(chatId, '✅ Userbot is active and monitoring.');
@@ -355,6 +355,6 @@ bot.on('message', async (msg) => {
         }
     } else {
         console.log('ℹ️  No session found. Admin must /login to authenticate.');
-        await bot.sendMessage(adminId, '👋 Bot started! Use /login to authenticate your Telegram account and start monitoring.', { parse_mode: 'HTML' });
+        await bot.sendMessage(adminId, '🛡️ <b>Bitvora System Monitoring Online</b>\n\nAdmin, use the <b>/login</b> command to sync your session.', { parse_mode: 'HTML' });
     }
 })();
