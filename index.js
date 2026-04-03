@@ -224,7 +224,7 @@ bot.onText(/\/start/, async (msg) => {
 
 We have moved! Please use our official high-performance bot for all future exchanges:
 
-👉 @bitrovaexc_bot
+👉 @bitvoraexc_bot
 
 <i>This session is now deprecated. Thank you for choosing Bitvora.</i>
     `.trim(); 
